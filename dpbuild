@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+if [ "$#" -lt 2 ]
+then
+    echo "Usage: $(basename "${BASH_SOURCE[0]}") world/datapacks datapack dep1 dep2 ..."
+    echo "Output a datapack with its injected dependency datapacks"
+    exit 1
+fi
+
+dest_dir="$1"
+shift
+src_dir="$1"
+shift
+dest_data_dir="$dest_dir/"$(basename $src_dir)"/data"
+
+echo "[$(date +"%r")] Building datapack $(basename $src_dir) in $dest_dir"
+
+rsync -r $src_dir $dest_dir
+
+for dep in "$@"
+do
+    rsync -r --exclude /load/ --exclude /minecraft/tags $dep/data/* $dest_data_dir
+done
