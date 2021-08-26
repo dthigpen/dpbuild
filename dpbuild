@@ -15,9 +15,9 @@ dest_data_dir="$dest_dir/"$(basename $src_dir)"/data"
 
 echo "[$(date +"%r")] Building datapack $(basename $src_dir) in $dest_dir"
 
-rsync -r $src_dir $dest_dir
+rsync -r --update $src_dir $dest_dir
 
 for dep in "$@"
 do
-    rsync -r --exclude /load/ --exclude /minecraft/tags $dep/data/* $dest_data_dir
+    rsync -r --update --exclude /load/ --exclude /minecraft/tags $dep/data/* $dest_data_dir
 done
