@@ -51,9 +51,10 @@ def detect_datapack_path_from_funct(load_funct: str, datapack_paths: list[Path])
     namespace = load_funct[:load_funct.find(':')]
     mcfunction = load_funct[load_funct.find(':') + 1:] + '.mcfunction'
     for datapack_path in datapack_paths:
-        mcfunction_path = datapack_path / 'data' / namespace / 'functions' / mcfunction
-        if mcfunction_path.is_file():
-            return datapack_path
+        if load_funct == get_lantern_load_tag_functions(datapack_path)[-1]:
+            mcfunction_path = datapack_path / 'data' / namespace / 'functions' / mcfunction
+            if mcfunction_path.is_file():
+                return datapack_path
     print(f'Warning: Failed to find datapack matching load function {load_funct}')
     return None
 
@@ -103,7 +104,6 @@ def get_args() -> argparse.Namespace:
 
 def ignore_patterns(patterns: list[str]):
     def get_ignored(dir, filenames):
-        # bad_regex = [r'.+/data/load(/.*)?',r'.+/data/minecraft/tags(/.*)?' ]
         dir_path = Path(dir)
         results = []
         for patt in patterns:
