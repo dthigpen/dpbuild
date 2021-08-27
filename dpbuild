@@ -34,14 +34,19 @@ class Datapack:
     
 def get_sibling_datapack_paths(datapack_paths: list[Path]):
     parents = set()
+    siblings = set(datapack_paths)
     for path in datapack_paths:
         parent = path.parent
         if parent not in parents:
+            parents.add(parent)
             for sibling in [p for p in parent.iterdir() if p.is_dir()]:
                 try:
-                    yield valid_datapack_path(sibling)
+                    valid_datapack_path(sibling)
+                    siblings.add(sibling)
                 except:
                     pass # TODO do better
+    siblings.remove(datapack_paths[0])
+    return siblings
 
 def get_lantern_load_tag_functions(datapack_path: str):
     with open(datapack_path / LOAD_TAG_PATH, 'r') as load_file:
@@ -93,11 +98,12 @@ def valid_dir(path_str: str) -> Path:
     return path
 
 def get_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='A tool to bundle packs with different namespaces')
-    parser.add_argument('datapacks', nargs='+', type=valid_datapack_path, help='Datapacks to bundle. All datapacks will be bundled into the first listed')
+    parser = argparse.ArgumentParser(description='A tool to bundle packs with different namespaces. Requires each datapack to implement Lantern Load.')
+    parser.add_argument('datapacks', nargs='+', type=valid_datapack_path, help='Datapack(s) to bundle. Only need to provide the top level datapack unless --strict is used.')
     parser.add_argument('--zip', action='store_true', help='Compress the bundled datapack into a .zip file')
     parser.add_argument('--dest', type=Path, default='bundles', help='Destination directory to copy bundled datapacks')
     parser.add_argument('--release', action='store_true', help='Removes function/test paths and zips output')
+    parser.add_argument('--strict', action='store_true', help='Only attempts to bundle using passed datapacks and not check parent folder for dependencies')
     return parser.parse_args()
 
 
@@ -153,7 +159,7 @@ def bundle_in_dest(datapack: Datapack, destination: Path, zip=False, release=Fal
 if __name__ == "__main__":
     args = get_args()
 
-    all_datapacks = list(get_sibling_datapack_paths(args.datapacks))
+    all_datapacks = args.datapacks if args.strict else get_sibling_datapack_paths(args.datapacks)
     datapack = resolve_datapack(args.datapacks[0], all_datapacks)
 
     args.dest.mkdir(parents=True, exist_ok=True)
