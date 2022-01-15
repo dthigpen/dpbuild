@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import filecmp
+from itertools import chain
 from pathlib import Path, PurePath
 from dataclasses import dataclass, field
 import json
@@ -33,7 +34,17 @@ class Datapack:
         indented = '\n'.join(indent_str + line for line in pack_str.split('\n'))
         output += indented
         return output
-    
+
+
+def get_datapacks_in_dir(datapack_parent_dir: Path) -> list[Path]:
+    datapacks = []
+    if datapack_parent_dir.is_dir():
+        for subdir in (d for d in datapack_parent_dir.iterdir() if d.is_dir()):
+            try:
+                datapacks.append(valid_datapack_path(str(subdir)))
+            except:
+                continue
+    return datapacks
 def get_sibling_datapack_paths(datapack_paths: list[Path]):
     parents = set()
     siblings = set(datapack_paths)
@@ -85,6 +96,22 @@ def resolve_datapack(datapack_path: Path, all_datapack_paths: list[Path]) -> Dat
                 dep_datapacks.append(resolve_datapack(dep_pack_path, all_datapack_paths)) 
         datapack.dependencies = dep_datapacks
     return datapack
+
+def datapacks_at_path(path_str: str) -> list[Path]:
+    datapacks = []
+    msg = ""
+    try:
+        datapacks.append(valid_datapack_path(path_str))
+    except Exception as e:
+        msg = str(e)
+        temp_path = Path(path_str)
+        datapacks = get_datapacks_in_dir(temp_path)
+    
+    if not datapacks:
+        raise argparse.ArgumentTypeError(f'Path is not a datapack or directory containing datapacks. {msg}')
+    
+    return datapacks
+
 
 def valid_datapack_path(path_str: str) -> Path:
     path = Path(path_str)
@@ -182,14 +209,11 @@ def move_changed_files(source_path: Path, dest_path: Path):
             shutil.copy2(source_path, dest_path)
     elif not source_path.exists():
         raise ValueError(f'Source path {source_path} does not exist!')
-    # if :
-    #     print('DIFFERENT')
-    # else:
-    #     print('SAME')
+
 
 def get_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='A tool to bundle packs with different namespaces. Requires each datapack to implement Lantern Load.')
-    parser.add_argument('datapacks', nargs='*', type=valid_datapack_path, help='Datapack(s) to bundle. Only need to provide the top level datapack unless --strict is used.')
+    parser.add_argument('datapacks', nargs='*', type=datapacks_at_path, help='Datapack(s) to bundle. Only need to provide the top level datapack unless --strict is used.')
     parser.add_argument('--zip', action='store_true', help='Compress the bundled datapack into a .zip file')
     parser.add_argument('--dest', type=Path, default='bundles', help='Destination directory to copy bundled datapacks')
     parser.add_argument('--release', action='store_true', help='Removes function/test paths and zips output')
@@ -197,12 +221,17 @@ def get_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run(datapack_paths: list[Path], destination_path: list[Path], zip_up: bool=False, release: bool=False, strict: bool=False):
-    if not datapack_paths:
-        datapack_paths.append(valid_datapack_path(os.getcwd()))
-
-    all_datapacks = datapack_paths if strict else get_sibling_datapack_paths(datapack_paths)
-    datapack = resolve_datapack(datapack_paths[0], all_datapacks)
+def run(datapack_paths_lists: list[list[Path]], destination_path: list[Path], zip_up: bool=False, release: bool=False, strict: bool=False):
+    if not datapack_paths_lists:
+        datapack_paths_lists.append([valid_datapack_path(os.getcwd())])
+    
+    # ensure that the first path is actually a datapack and not a datapack dir
+    if len(datapack_paths_lists[0]) != 1:
+        raise argparse.ArgumentTypeError('First datapack argument must be a specific datapack and not a datapack directory')
+    
+    flattened_datapacks = list(chain.from_iterable(datapack_paths_lists))
+    all_datapacks = datapack_paths_lists if strict else get_sibling_datapack_paths(flattened_datapacks)
+    datapack = resolve_datapack(flattened_datapacks[0], all_datapacks)
     destination_path.mkdir(parents=True, exist_ok=True)
     bundle_in_dest(datapack,destination_path, zip_up, release)
 
