@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
-import glob
+import filecmp
 from pathlib import Path, PurePath
 from dataclasses import dataclass, field
 import json
@@ -18,16 +18,16 @@ class Datapack:
     dependencies: list = field(default_factory=list)
 
     def __str__(self):
-        return Datapack.__recusive_str(self)
+        return Datapack.__recursive_str(self)
 
     @staticmethod
-    def __recusive_str(pack, output='', indent=0):
+    def __recursive_str(pack, output='', indent=0):
         indent_str = '  ' * indent
         pack_str = f'Path: {pack.path}'
         if pack.dependencies:
             pack_str += '\nDependencies:'
             for dep in pack.dependencies:
-                pack_str = Datapack.__recusive_str(dep, pack_str + '\n', indent + 2)
+                pack_str = Datapack.__recursive_str(dep, pack_str + '\n', indent + 2)
         indented = '\n'.join(indent_str + line for line in pack_str.split('\n'))
         output += indented
         return output
@@ -53,12 +53,18 @@ def get_lantern_load_tag_functions(datapack_path: str):
         return json.load(load_file)['values']
 
 def detect_datapack_path_from_funct(load_funct: str, datapack_paths: list[Path]) -> Path:
-    namespace = load_funct[:load_funct.find(':')]
-    mcfunction = load_funct[load_funct.find(':') + 1:] + '.mcfunction'
+    is_tag = load_funct.startswith('#')
+    function_or_tag_dir = 'tags/functions' if is_tag else 'functions'
+    file_ext = '.json' if is_tag else '.mcfunction'
+    
+    if is_tag:
+        load_funct = load_funct
+    namespace = load_funct[1 if is_tag else 0:load_funct.find(':')]
+    load_file = load_funct[load_funct.find(':') + 1:] + file_ext
     for datapack_path in datapack_paths:
         if load_funct == get_lantern_load_tag_functions(datapack_path)[-1]:
-            mcfunction_path = datapack_path / 'data' / namespace / 'functions' / mcfunction
-            if mcfunction_path.is_file():
+            load_file_path = datapack_path / 'data' / namespace / function_or_tag_dir / load_file
+            if load_file_path.is_file():
                 return datapack_path
     print(f'Warning: Failed to find datapack matching load function {load_funct}')
     return None
@@ -68,12 +74,13 @@ def resolve_datapack(datapack_path: Path, all_datapack_paths: list[Path]) -> Dat
     load_functions = get_lantern_load_tag_functions(datapack_path)
     if load_functions:
         # Pop last since its own load function
+        # TODO only pop if last funct is in this datapack
         load_functions.pop()
         dep_datapacks = []
         for load_func in load_functions:
             dep_pack_path = detect_datapack_path_from_funct(load_func, all_datapack_paths)
             if dep_pack_path:
-                dep_datapacks.append(resolve_datapack(dep_pack_path, all_datapacks)) 
+                dep_datapacks.append(resolve_datapack(dep_pack_path, all_datapack_paths)) 
         datapack.dependencies = dep_datapacks
     return datapack
 
@@ -97,16 +104,6 @@ def valid_dir(path_str: str) -> Path:
         raise argparse.ArgumentTypeError(f'Invalid directory: {path}')
     return path
 
-def get_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='A tool to bundle packs with different namespaces. Requires each datapack to implement Lantern Load.')
-    parser.add_argument('datapacks', nargs='+', type=valid_datapack_path, help='Datapack(s) to bundle. Only need to provide the top level datapack unless --strict is used.')
-    parser.add_argument('--zip', action='store_true', help='Compress the bundled datapack into a .zip file')
-    parser.add_argument('--dest', type=Path, default='bundles', help='Destination directory to copy bundled datapacks')
-    parser.add_argument('--release', action='store_true', help='Removes function/test paths and zips output')
-    parser.add_argument('--strict', action='store_true', help='Only attempts to bundle using passed datapacks and not check parent folder for dependencies')
-    return parser.parse_args()
-
-
 
 def ignore_patterns(patterns: list[str]):
     def get_ignored(dir, filenames):
@@ -120,49 +117,96 @@ def ignore_patterns(patterns: list[str]):
         return results
     return get_ignored
 
-def bundle_in_dest(datapack: Datapack, destination: Path, zip=False, release=False):
+def copy_datapack_files(datapack: Datapack, dest_data_dir: Path, file_ignore_patterns: list):
+    src_data_dir = datapack.path / 'data'
+    shutil.copytree(src_data_dir, dest_data_dir, ignore=ignore_patterns(file_ignore_patterns), dirs_exist_ok=True)
+    for dep in datapack.dependencies:
+        copy_datapack_files(dep, dest_data_dir, file_ignore_patterns)
+
+def bundle_in_dest(datapack: Datapack, destination: Path, zip_up, release):
     main_ignores = []
-    dep_ignores = [r'.+/data/load(/.*)?',r'.+/data/minecraft/tags(/.*)?' ]
+    file_ignore_patterns = [r'.+/data/load(/.*)?',r'.+/data/minecraft/tags(/.*)?' ]
     if release:
         main_ignores = [r'.+/functions/test(/.*)?']
-        dep_ignores += main_ignores
+        file_ignore_patterns += main_ignores
     
     with tempfile.TemporaryDirectory() as tmpdir:
         src_datapack_path = datapack.path
         datapack_name = src_datapack_path.name
         dest_datapack_path = destination / datapack_name
         tmp_datapack_path = Path(tmpdir) / datapack_name
-        
         # copy base datapack
         shutil.copytree(src_datapack_path, tmp_datapack_path,ignore=ignore_patterns(main_ignores), dirs_exist_ok=True)
         # copy dependencies
         for dep in datapack.dependencies:
-            src_data_dir = dep.path / 'data'
-            dest_data_dir = tmp_datapack_path / 'data'
-            shutil.copytree(src_data_dir, dest_data_dir, ignore=ignore_patterns(dep_ignores), dirs_exist_ok=True)
+            copy_datapack_files(dep, tmp_datapack_path / 'data', file_ignore_patterns)        
         
-        if zip or release:
+        print(f'Building datapack at {dest_datapack_path}')
+        if zip_up or release:
             zip_path = shutil.make_archive(datapack_name, 'zip', tmp_datapack_path)
             tmp_datapack_path = zip_path
             dest_datapack_path = destination / Path(zip_path).name
         
         if dest_datapack_path.exists():
-            print(f'Removing existing pack at {dest_datapack_path}')
+            print(f'Removing existing pack..')
             if dest_datapack_path.is_dir():
                 shutil.rmtree(dest_datapack_path)
             elif dest_datapack_path.is_file():
                 os.remove(dest_datapack_path)
         shutil.move(tmp_datapack_path, dest_datapack_path)
 
+        print('Done')
 
+def move_changed_files(source_path: Path, dest_path: Path):
+    
+    # if the dest does not exist or is a different type than the source, copy over
+    if not dest_path.exists() or (source_path.is_file() and dest_path.is_dir()) or (source_path.is_dir() and dest_path.is_file()):
+        print(f'copy {source_path.name} to {dest_path}')
+        if dest_path.is_dir():
+            shutil.rmtree(dest_path)
+        elif dest_path.is_file():
+            os.remove(dest_path)
+        shutil.move(source_path, dest_path)
+
+    elif source_path.is_dir():
+        for f in source_path.iterdir():
+            dest_file = dest_path / f.name
+            move_changed_files(f, dest_file)
+        # TODO handle dir
+    elif source_path.is_file():
+        is_match = filecmp.cmp(source_path, dest_path, shallow=False)
+        print(f'{source_path}, {dest_path}: {"NO CHANGES" if is_match else "CHANGED"}')
+        if not is_match:
+            shutil.copy2(source_path, dest_path)
+    elif not source_path.exists():
+        raise ValueError(f'Source path {source_path} does not exist!')
+    # if :
+    #     print('DIFFERENT')
+    # else:
+    #     print('SAME')
+
+def get_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description='A tool to bundle packs with different namespaces. Requires each datapack to implement Lantern Load.')
+    parser.add_argument('datapacks', nargs='*', type=valid_datapack_path, help='Datapack(s) to bundle. Only need to provide the top level datapack unless --strict is used.')
+    parser.add_argument('--zip', action='store_true', help='Compress the bundled datapack into a .zip file')
+    parser.add_argument('--dest', type=Path, default='bundles', help='Destination directory to copy bundled datapacks')
+    parser.add_argument('--release', action='store_true', help='Removes function/test paths and zips output')
+    parser.add_argument('--strict', action='store_true', help='Only attempts to bundle using passed datapacks and not check parent folder for dependencies')
+    return parser.parse_args()
+
+
+def run(datapack_paths: list[Path], destination_path: list[Path], zip_up: bool=False, release: bool=False, strict: bool=False):
+    if not datapack_paths:
+        datapack_paths.append(valid_datapack_path(os.getcwd()))
+
+    all_datapacks = datapack_paths if strict else get_sibling_datapack_paths(datapack_paths)
+    datapack = resolve_datapack(datapack_paths[0], all_datapacks)
+    destination_path.mkdir(parents=True, exist_ok=True)
+    bundle_in_dest(datapack,destination_path, zip_up, release)
 
 if __name__ == "__main__":
-    args = get_args()
-
-    all_datapacks = args.datapacks if args.strict else get_sibling_datapack_paths(args.datapacks)
-    datapack = resolve_datapack(args.datapacks[0], all_datapacks)
-
-    args.dest.mkdir(parents=True, exist_ok=True)
-    bundle_in_dest(datapack,args.dest, zip=args.zip, release=args.release)
-
-    
+    try:
+        args = get_args()
+        run(args.datapacks, args.dest, args.zip, args.release)
+    except argparse.ArgumentTypeError as e:
+        print(f'Argument error: {e}')
