@@ -45,6 +45,7 @@ def get_datapacks_in_dir(datapack_parent_dir: Path) -> list[Path]:
             except:
                 continue
     return datapacks
+
 def get_sibling_datapack_paths(datapack_paths: list[Path]):
     parents = set()
     siblings = set(datapack_paths)
@@ -152,23 +153,29 @@ def copy_datapack_files(datapack: Datapack, dest_data_dir: Path, file_ignore_pat
     for dep in datapack.dependencies:
         copy_datapack_files(dep, dest_data_dir, file_ignore_patterns)
 
-def bundle_in_dest(datapack: Datapack, destination: Path, zip_up, release):
-    main_ignores = []
-    file_ignore_patterns = [r'.+/data/load(/.*)?',r'.+/data/minecraft/tags(/.*)?' ]
+def bundle_in_dest(datapack: Datapack, destination: Path, zip_up, release, no_dep_tests):
+    main_pack_ignores = []
+    ignore_tests = r'.+/functions/test(/.*)?'
+    ignore_lantern_load = r'.+/data/load(/.*)?'
+    ignore_minecraft_tags = r'.+/data/minecraft/tags(/.*)?'
+    dependency_ignores = [ignore_lantern_load,ignore_minecraft_tags]
     if release:
-        main_ignores = [r'.+/functions/test(/.*)?']
-        file_ignore_patterns += main_ignores
+        main_pack_ignores = [ignore_tests]
+        dependency_ignores += [ignore_tests]
     
+    if no_dep_tests:
+        dependency_ignores += [ignore_tests]
+
     with tempfile.TemporaryDirectory() as tmpdir:
         src_datapack_path = datapack.path
         datapack_name = src_datapack_path.name
         dest_datapack_path = destination / datapack_name
         tmp_datapack_path = Path(tmpdir) / datapack_name
         # copy base datapack
-        shutil.copytree(src_datapack_path, tmp_datapack_path,ignore=ignore_patterns(main_ignores), dirs_exist_ok=True)
+        shutil.copytree(src_datapack_path, tmp_datapack_path,ignore=ignore_patterns(main_pack_ignores), dirs_exist_ok=True)
         # copy dependencies
         for dep in datapack.dependencies:
-            copy_datapack_files(dep, tmp_datapack_path / 'data', file_ignore_patterns)        
+            copy_datapack_files(dep, tmp_datapack_path / 'data', dependency_ignores)        
         
         print(f'Building datapack at {dest_datapack_path}')
         if zip_up or release:
@@ -218,10 +225,11 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('--dest', type=Path, default='bundles', help='Destination directory to copy bundled datapacks')
     parser.add_argument('--release', action='store_true', help='Removes function/test paths and zips output')
     parser.add_argument('--strict', action='store_true', help='Only attempts to bundle using passed datapacks and not check parent folder for dependencies')
+    parser.add_argument('--no-dep-tests', action='store_true', help='Only applicable when not in release mode. Removes test functions from bundled dependency packs.')
     return parser.parse_args()
 
 
-def run(datapack_paths_lists: list[list[Path]], destination_path: list[Path], zip_up: bool=False, release: bool=False, strict: bool=False):
+def run(datapack_paths_lists: list[list[Path]], destination_path: list[Path], zip_up: bool=False, release: bool=False, strict: bool=False, no_dep_tests: bool=False):
     if not datapack_paths_lists:
         datapack_paths_lists.append([valid_datapack_path(os.getcwd())])
     
@@ -233,11 +241,11 @@ def run(datapack_paths_lists: list[list[Path]], destination_path: list[Path], zi
     all_datapacks = datapack_paths_lists if strict else get_sibling_datapack_paths(flattened_datapacks)
     datapack = resolve_datapack(flattened_datapacks[0], all_datapacks)
     destination_path.mkdir(parents=True, exist_ok=True)
-    bundle_in_dest(datapack,destination_path, zip_up, release)
+    bundle_in_dest(datapack,destination_path, zip_up, release, no_dep_tests)
 
 if __name__ == "__main__":
     try:
         args = get_args()
-        run(args.datapacks, args.dest, args.zip, args.release)
+        run(args.datapacks, args.dest, zip_up=args.zip, release=args.release, no_dep_tests=args.no_dep_tests)
     except argparse.ArgumentTypeError as e:
         print(f'Argument error: {e}')
