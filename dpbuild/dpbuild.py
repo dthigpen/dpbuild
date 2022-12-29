@@ -243,9 +243,14 @@ def run(datapack_paths_lists: list[list[Path]], destination_path: list[Path], zi
     destination_path.mkdir(parents=True, exist_ok=True)
     bundle_in_dest(datapack,destination_path, zip_up, release, no_dep_tests)
 
-if __name__ == "__main__":
+def main():
     try:
         args = get_args()
         run(args.datapacks, args.dest, zip_up=args.zip, release=args.release, no_dep_tests=args.no_dep_tests)
+        return 0
     except argparse.ArgumentTypeError as e:
         print(f'Argument error: {e}')
+    return 1
+
+if __name__ == "__main__":
+    main()
