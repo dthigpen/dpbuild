@@ -12,6 +12,7 @@ import shutil
 import tempfile
 import re
 import os
+import sys
 
 LOAD_TAG_PATH = Path('data/load/tags/functions/load.json')
 
@@ -59,6 +60,7 @@ def get_sibling_datapack_paths(datapack_paths: list[Path]):
                     siblings.add(sibling)
                 except:
                     pass # TODO do better
+    # TODO rework this part
     siblings.remove(datapack_paths[0])
     return siblings
 
@@ -83,9 +85,9 @@ def detect_datapack_path_from_funct(load_funct: str, datapack_paths: list[Path])
     print(f'Warning: Failed to find datapack matching load function {load_funct}')
     return None
 
-def resolve_datapack(datapack_path: Path, all_datapack_paths: list[Path]) -> Datapack:
-    datapack = Datapack(path=datapack_path)
-    load_functions = get_lantern_load_tag_functions(datapack_path)
+def resolve_datapack(main_datapack_path: Path, all_datapack_paths: list[Path]) -> Datapack:
+    datapack = Datapack(main_datapack_path)
+    load_functions = get_lantern_load_tag_functions(main_datapack_path)
     if load_functions:
         # Pop last since its own load function
         # TODO only pop if last funct is in this datapack
@@ -220,7 +222,8 @@ def move_changed_files(source_path: Path, dest_path: Path):
 
 def get_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='A tool to bundle packs with different namespaces. Requires each datapack to implement Lantern Load.')
-    parser.add_argument('datapacks', nargs='*', type=datapacks_at_path, help='Datapack(s) to bundle. Only need to provide the top level datapack unless --strict is used.')
+    parser.add_argument('datapack', type=valid_datapack_path, default='.', help='Datapack to bundle. Only need to provide the top level datapack unless --strict is used.')
+    parser.add_argument('dependencies', nargs='*', type=datapacks_at_path, help='Dependency datapacks (or .zips, directories) to bundle into the main one.')
     parser.add_argument('--zip', action='store_true', help='Compress the bundled datapack into a .zip file')
     parser.add_argument('--dest', type=Path, default='bundles', help='Destination directory to copy bundled datapacks')
     parser.add_argument('--release', action='store_true', help='Removes function/test paths and zips output')
@@ -229,24 +232,18 @@ def get_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run(datapack_paths_lists: list[list[Path]], destination_path: list[Path], zip_up: bool=False, release: bool=False, strict: bool=False, no_dep_tests: bool=False):
-    if not datapack_paths_lists:
-        datapack_paths_lists.append([valid_datapack_path(os.getcwd())])
-    
-    # ensure that the first path is actually a datapack and not a datapack dir
-    if len(datapack_paths_lists[0]) != 1:
-        raise argparse.ArgumentTypeError('First datapack argument must be a specific datapack and not a datapack directory')
-    
-    flattened_datapacks = list(chain.from_iterable(datapack_paths_lists))
-    all_datapacks = datapack_paths_lists if strict else get_sibling_datapack_paths(flattened_datapacks)
-    datapack = resolve_datapack(flattened_datapacks[0], all_datapacks)
+def run(main_datapack_path: Path, dependency_datapacks_paths: list[Path], destination_path:Path, zip_up: bool=False, release: bool=False, strict: bool=False, no_dep_tests: bool=False):
+    all_potential_deps = dependency_datapacks_paths if strict else get_sibling_datapack_paths([main_datapack_path, *dependency_datapacks_paths])
+    datapack = resolve_datapack(main_datapack_path, [*all_potential_deps])
     destination_path.mkdir(parents=True, exist_ok=True)
     bundle_in_dest(datapack,destination_path, zip_up, release, no_dep_tests)
 
 def main():
     try:
         args = get_args()
-        run(args.datapacks, args.dest, zip_up=args.zip, release=args.release, no_dep_tests=args.no_dep_tests)
+        # flatten list[list[Path]] into list[Path]
+        flattened_deps = list(chain.from_iterable(args.dependencies))
+        run(args.datapack, flattened_deps, args.dest, zip_up=args.zip, release=args.release, no_dep_tests=args.no_dep_tests, strict=args.strict)
         return 0
     except argparse.ArgumentTypeError as e:
         print(f'Argument error: {e}')
