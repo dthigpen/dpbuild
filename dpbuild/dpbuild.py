@@ -194,7 +194,7 @@ def bundle_in_dest(datapack: Datapack, destination: Path, zip_up, release, no_de
     ignore_tests = r'.+/functions/test(/.*)?'
     ignore_lantern_load = r'.+/data/load(/.*)?'
     ignore_minecraft_tags = r'.+/data/minecraft/tags(/.*)?'
-    dependency_ignores = [ignore_lantern_load,ignore_minecraft_tags]
+    dependency_ignores = []
     if release:
         main_pack_ignores = [ignore_tests]
         dependency_ignores += [ignore_tests]
@@ -207,13 +207,15 @@ def bundle_in_dest(datapack: Datapack, destination: Path, zip_up, release, no_de
         datapack_name = src_datapack_path.name
         dest_datapack_path = destination / datapack_name
         tmp_datapack_path = Path(tmpdir) / datapack_name
-        # copy base datapack
-        shutil.copytree(src_datapack_path, tmp_datapack_path,ignore=ignore_patterns(main_pack_ignores), dirs_exist_ok=True)
-        # TODO fix ignoring lantern load and minecraft tag files
+        
+        # Create base datapack dir
+        (tmp_datapack_path / 'data').mkdir(parents=True, exist_ok=True)
         # copy dependencies
         for dep in datapack.dependencies:
             copy_datapack_files(dep, tmp_datapack_path / 'data', dependency_ignores)        
         
+        # copy base datapack after deps to prioritize main datapack files
+        shutil.copytree(src_datapack_path, tmp_datapack_path,ignore=ignore_patterns(main_pack_ignores), dirs_exist_ok=True)
         print(f'Building datapack at {dest_datapack_path}')
         if zip_up or release:
             zip_path = shutil.make_archive(datapack_name, 'zip', tmp_datapack_path)
