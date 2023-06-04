@@ -13,7 +13,8 @@ import tempfile
 import re
 import os
 import sys
-
+import zipfile
+from enum import Enum
 LOAD_TAG_PATH = Path('data/load/tags/functions/load.json')
 
 @dataclass
@@ -47,24 +48,23 @@ def get_datapacks_in_dir(datapack_parent_dir: Path) -> list[Path]:
                 continue
     return datapacks
 
-def get_sibling_datapack_paths(datapack_paths: list[Path]):
-    parents = set()
-    siblings = set(datapack_paths)
-    for path in datapack_paths:
-        parent = path.parent
-        if parent not in parents:
-            parents.add(parent)
-            for sibling in [p for p in parent.iterdir() if p.is_dir()]:
+def discover_from_dirs(discover_dirs: list[Path], tempdir) -> set[Path]:
+    discovered_datapacks = set()
+    for d in discover_dirs:
+        for p in d.iterdir():
+            if p.is_dir():
                 try:
-                    valid_datapack_path(sibling)
-                    siblings.add(sibling)
+                    valid_datapack_path(p)
+                    discovered_datapacks.add(p)
                 except:
-                    pass # TODO do better
-    # TODO rework this part
-    siblings.remove(datapack_paths[0])
-    return siblings
+                    pass
+            elif p.suffix == '.zip':
+                unzipped_path = unzip_potential_datapack(p, tempdir)
+                valid_datapack_path(unzipped_path)
+                discovered_datapacks.add(unzipped_path)
+    return discovered_datapacks
 
-def get_lantern_load_tag_functions(datapack_path: str):
+def get_lantern_load_tag_functions(datapack_path: str) -> list[str | dict]:
     with open(datapack_path / LOAD_TAG_PATH, 'r') as load_file:
         return json.load(load_file)['values']
 
@@ -82,29 +82,59 @@ def detect_datapack_path_from_funct(load_funct: str, datapack_paths: list[Path])
             load_file_path = datapack_path / 'data' / namespace / function_or_tag_dir / load_file
             if load_file_path.is_file():
                 return datapack_path
-    print(f'Warning: Failed to find datapack matching load function {load_funct}')
     return None
 
-def resolve_datapack(main_datapack_path: Path, all_datapack_paths: list[Path]) -> Datapack:
+def resolve_datapack(main_datapack_path: Path, required_dep_paths: list[Path], discovered_paths: set[Path] = None) -> Datapack:
     datapack = Datapack(main_datapack_path)
-    load_functions = get_lantern_load_tag_functions(main_datapack_path)
-    if load_functions:
-        # Pop last since its own load function
-        # TODO only pop if last funct is in this datapack
-        load_functions.pop()
-        dep_datapacks = []
-        for load_func in load_functions:
-            dep_pack_path = detect_datapack_path_from_funct(load_func, all_datapack_paths)
-            if dep_pack_path:
-                dep_datapacks.append(resolve_datapack(dep_pack_path, all_datapack_paths)) 
-        datapack.dependencies = dep_datapacks
+    datapack.dependencies = [Datapack(p) for p in required_dep_paths]
+    # if there are discovered paths then --discover is enabled. Find the rest in those
+    if discovered_paths:
+        try:
+            # Must be a lantern load datapack to discover deps
+            valid_lantern_load_datapack_path(main_datapack_path)
+            # TODO handle json type entry to values
+            load_functions = get_lantern_load_tag_functions(main_datapack_path)
+            if load_functions:
+                # Pop last since its own load function
+                # TODO only pop if last funct is in this datapack
+                load_functions.pop()
+                dep_datapacks = []
+                for load_func in load_functions:
+                    # first check if satisfied by required deps
+                    dep_pack_path = detect_datapack_path_from_funct(load_func, required_dep_paths)
+                    if not dep_pack_path:
+                        dep_pack_path = detect_datapack_path_from_funct(load_func, discovered_paths)
+                        if dep_pack_path:
+                            dep_datapacks.append(resolve_datapack(dep_pack_path, [], discovered_paths=[*discovered_paths, *required_dep_paths])) 
+                        else:
+                            print(f'Warning: Failed to find datapack matching load function {load_func}')
+                datapack.dependencies.extend(dep_datapacks)
+        except argparse.ArgumentTypeError as e:
+            raise e
     return datapack
 
-def datapacks_at_path(path_str: str) -> list[Path]:
+class DepType(Enum):
+    DATAPACK = 1
+    ZIP = 2
+
+def valid_dep_path(path_str: str) -> tuple[DepType,Path]:
+    try:
+        if path_str.endswith('.zip'):
+            return DepType.ZIP,Path(path_str)
+        else:
+            p = valid_datapack_path(path_str)
+            return DepType.DATAPACK,p
+    except Exception as e:
+        raise e
+def dp_or_zips_at_path(path_str: str) -> list[Path]:
     datapacks = []
     msg = ""
     try:
-        datapacks.append(valid_datapack_path(path_str))
+        # allow zip archive
+        if path_str.endswith('.zip'):
+            datapacks.append(Path(path_str))
+        else:
+            datapacks.append(valid_datapack_path(path_str))
     except Exception as e:
         msg = str(e)
         temp_path = Path(path_str)
@@ -125,6 +155,10 @@ def valid_datapack_path(path_str: str) -> Path:
     if not mc_meta_file.is_file():
         raise argparse.ArgumentTypeError(f'Datapack does not have a pack.mcmeta file: {mc_meta_file}')
     
+    return path
+
+def valid_lantern_load_datapack_path(path_str: str | Path) -> Path:
+    path = valid_datapack_path(path_str)
     lantern_load_tag = path / LOAD_TAG_PATH
     if not lantern_load_tag.is_file():
         raise argparse.ArgumentTypeError(f'Datapack does not have Lantern Load tag: {lantern_load_tag}')
@@ -175,6 +209,7 @@ def bundle_in_dest(datapack: Datapack, destination: Path, zip_up, release, no_de
         tmp_datapack_path = Path(tmpdir) / datapack_name
         # copy base datapack
         shutil.copytree(src_datapack_path, tmp_datapack_path,ignore=ignore_patterns(main_pack_ignores), dirs_exist_ok=True)
+        # TODO fix ignoring lantern load and minecraft tag files
         # copy dependencies
         for dep in datapack.dependencies:
             copy_datapack_files(dep, tmp_datapack_path / 'data', dependency_ignores)        
@@ -219,31 +254,53 @@ def move_changed_files(source_path: Path, dest_path: Path):
     elif not source_path.exists():
         raise ValueError(f'Source path {source_path} does not exist!')
 
-
 def get_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='A tool to bundle packs with different namespaces. Requires each datapack to implement Lantern Load.')
-    parser.add_argument('datapack', type=valid_datapack_path, default='.', help='Datapack to bundle. Only need to provide the top level datapack unless --strict is used.')
-    parser.add_argument('dependencies', nargs='*', type=datapacks_at_path, help='Dependency datapacks (or .zips, directories) to bundle into the main one.')
+    parser = argparse.ArgumentParser(description='A tool to bundle packs with different namespaces.')
+    parser.add_argument('datapack', type=valid_datapack_path, default='.', help='Datapack to bundle')
+    parser.add_argument('dependencies', nargs='*', type=valid_dep_path, help='Dependency datapacks or .zips to bundle into the main one')
     parser.add_argument('--zip', action='store_true', help='Compress the bundled datapack into a .zip file')
     parser.add_argument('--dest', type=Path, default='bundles', help='Destination directory to copy bundled datapacks')
     parser.add_argument('--release', action='store_true', help='Removes function/test paths and zips output')
-    parser.add_argument('--strict', action='store_true', help='Only attempts to bundle using passed datapacks and not check parent folder for dependencies')
+    parser.add_argument('--discover', nargs='*', help='Directories to discover Lantern Load datapack dependencies')
     parser.add_argument('--no-dep-tests', action='store_true', help='Only applicable when not in release mode. Removes test functions from bundled dependency packs.')
     return parser.parse_args()
 
 
-def run(main_datapack_path: Path, dependency_datapacks_paths: list[Path], destination_path:Path, zip_up: bool=False, release: bool=False, strict: bool=False, no_dep_tests: bool=False):
-    all_potential_deps = dependency_datapacks_paths if strict else get_sibling_datapack_paths([main_datapack_path, *dependency_datapacks_paths])
-    datapack = resolve_datapack(main_datapack_path, [*all_potential_deps])
-    destination_path.mkdir(parents=True, exist_ok=True)
-    bundle_in_dest(datapack,destination_path, zip_up, release, no_dep_tests)
+def unzip_potential_datapack(zip_path: Path, tempdir: Path) -> Path:
+    unzipped_p = tempdir / zip_path.stem
+    unzipped_p.mkdir(parents=True)
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(unzipped_p)
+    return unzipped_p
+    
+
+def convert_zips(dep_or_zip_paths: list[Path], tempdir) -> list[Path]:
+    dep_paths = []
+    for p in dep_or_zip_paths:
+        if p.is_file() and p.suffix == '.zip':
+            p = unzip_potential_datapack(p, tempdir)
+        try:
+            dep_paths.append(valid_datapack_path(p))
+        except argparse.ArgumentTypeError as e:
+            continue
+    return dep_paths
+
+def run(main_datapack_path: Path, dep_or_zip_paths: list[Path], destination_path:Path, zip_up: bool=False, release: bool=False, no_dep_tests: bool=False, discover_dirs: list[Path] = None):
+    with tempfile.TemporaryDirectory() as tempdir_name:
+        tempdir = Path(tempdir_name)
+        dep_paths = convert_zips(dep_or_zip_paths, tempdir)
+        potential_deps = discover_from_dirs(discover_dirs, tempdir) if discover_dirs else None
+        
+        datapack = resolve_datapack(main_datapack_path, dep_paths, discovered_paths = potential_deps)
+        destination_path.mkdir(parents=True, exist_ok=True)
+        bundle_in_dest(datapack,destination_path, zip_up, release, no_dep_tests)
 
 def main():
     try:
         args = get_args()
-        # flatten list[list[Path]] into list[Path]
-        flattened_deps = list(chain.from_iterable(args.dependencies))
-        run(args.datapack, flattened_deps, args.dest, zip_up=args.zip, release=args.release, no_dep_tests=args.no_dep_tests, strict=args.strict)
+        datapacks_or_zip_paths = [path for dep_type,path in args.dependencies]
+        discover_dirs = args.discover
+        run(args.datapack, datapacks_or_zip_paths, args.dest, zip_up=args.zip, release=args.release, no_dep_tests=args.no_dep_tests, discover_dirs=discover_dirs)
         return 0
     except argparse.ArgumentTypeError as e:
         print(f'Argument error: {e}')

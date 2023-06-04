@@ -4,19 +4,25 @@ A datapack bundling tool for combining multiple namespaces into a single datapac
 ## Usage
 Clone or download this repository and execute the script by running either `./dpbuild <args>` or `python dpbuild <args>`. All datapacks must implement Lantern Load in order to bundle. See help text below for argument details.
 ```
-usage: dpbuild [-h] [--zip] [--dest DEST] [--release] [--strict] datapacks [datapacks ...]
+usage: dpbuild [-h] [--zip] [--dest DEST] [--release] [--discover [DISCOVER ...]]
+                   [--no-dep-tests]
+                   datapack [dependencies ...]
 
-A tool to bundle packs with different namespaces. Requires each datapack to implement Lantern Load.
+A tool to bundle packs with different namespaces.
 
 positional arguments:
-  datapacks    Datapack(s) to bundle. Only need to provide the top level datapack unless --strict is used.
+  datapack              Datapack to bundle
+  dependencies          Dependency datapacks or .zips to bundle into the main one
 
-optional arguments:
-  -h, --help   show this help message and exit
-  --zip        Compress the bundled datapack into a .zip file
-  --dest DEST  Destination directory to copy bundled datapacks
-  --release    Removes function/test paths and zips output
-  --strict     Only attempts to bundle using passed datapacks and not check parent folder for dependencies
+options:
+  -h, --help            show this help message and exit
+  --zip                 Compress the bundled datapack into a .zip file
+  --dest DEST           Destination directory to copy bundled datapacks
+  --release             Removes function/test paths and zips output
+  --discover [DISCOVER ...]
+                        Directories to discover Lantern Load datapack dependencies
+  --no-dep-tests        Only applicable when not in release mode. Removes test functions from
+                        bundled dependency packs.
 ```
 
 ## Example
