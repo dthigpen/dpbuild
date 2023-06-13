@@ -1,0 +1,7 @@
+[project]
+name = "dpbuild"
+version = "0.1.0"
+authors = [{ name = "David Thigpen", email = "davidthigs@gmail.com" }]
+description = "A library for writing Minecraft datapacks in Python syntax"
+readme = "README.md"
+requires-python = ">=3.8"
