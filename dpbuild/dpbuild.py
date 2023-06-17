@@ -203,8 +203,9 @@ def bundle_in_dest(datapack: Datapack, destination: Path, zip_up, release, no_de
         dependency_ignores += [ignore_tests]
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        src_datapack_path = datapack.path
+        src_datapack_path = datapack.path.resolve()
         datapack_name = src_datapack_path.name
+        destination = destination.resolve()
         dest_datapack_path = destination / datapack_name
         tmp_datapack_path = Path(tmpdir) / datapack_name
         
