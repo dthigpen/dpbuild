@@ -264,7 +264,7 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('--zip', action='store_true', help='Compress the bundled datapack into a .zip file')
     parser.add_argument('--dest', type=Path, default='bundles', help='Destination directory to copy bundled datapacks')
     parser.add_argument('--release', action='store_true', help='Removes function/test paths and zips output')
-    parser.add_argument('--discover', nargs='*', help='Directories to discover Lantern Load datapack dependencies')
+    parser.add_argument('--discover', nargs='*',type=valid_dir, help='Directories to discover Lantern Load datapack dependencies')
     parser.add_argument('--no-dep-tests', action='store_true', help='Only applicable when not in release mode. Removes test functions from bundled dependency packs.')
     return parser.parse_args()
 
