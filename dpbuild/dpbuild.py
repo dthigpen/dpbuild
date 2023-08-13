@@ -65,9 +65,14 @@ def discover_from_dirs(discover_dirs: list[Path], tempdir) -> set[Path]:
     return discovered_datapacks
 
 def get_lantern_load_tag_functions(datapack_path: str) -> list[str | dict]:
+    result = []
     with open(datapack_path / LOAD_TAG_PATH, 'r') as load_file:
-        return json.load(load_file)['values']
-
+        for item in json.load(load_file)['values']:
+            if isinstance(item, dict):
+                result.append(item['id'])
+            else:
+                result.append(item)
+    return result
 def detect_datapack_path_from_funct(load_funct: str, datapack_paths: list[Path]) -> Path:
     is_tag = load_funct.startswith('#')
     function_or_tag_dir = 'tags/functions' if is_tag else 'functions'
@@ -78,7 +83,8 @@ def detect_datapack_path_from_funct(load_funct: str, datapack_paths: list[Path])
     namespace = load_funct[1 if is_tag else 0:load_funct.find(':')]
     load_file = load_funct[load_funct.find(':') + 1:] + file_ext
     for datapack_path in datapack_paths:
-        if load_funct == get_lantern_load_tag_functions(datapack_path)[-1]:
+        tag_values = get_lantern_load_tag_functions(datapack_path)
+        if tag_values and load_funct == tag_values[-1]:
             load_file_path = datapack_path / 'data' / namespace / function_or_tag_dir / load_file
             if load_file_path.is_file():
                 return datapack_path
